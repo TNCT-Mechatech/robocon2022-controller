@@ -8,6 +8,10 @@
 #include "mbed.h"
 #include <cstdint>
 #include <cstdio>
+#include <MessageStructure.hpp>
+#include <Controller.hpp>
+#include <SerialBridge.hpp>
+#include <MbedHardwareSerial.hpp>
 
 
 ////////////////////////////////////
@@ -65,44 +69,7 @@
 #define LOOP_RATE 100
 #define COOLTIME_MS 250
 
-////////////////////////////////////
-//  Private Type Definitio
-
-typedef struct ShooterType
-{
-    //  shooter num
-    int8_t num;
-    //  Range 0-1
-    float power;
-    /**
-     *  0: nothing
-     *  1: up
-     *  2: down
-     *  3: shoot
-     */
-    int8_t action;
-} shooter_t;
-
-typedef struct Vector3Type
-{
-    float x;
-    float y;
-    float z;
-} vector3_t;
-
-/**
- * @brief Native Controller (what is unformatted joy controller variables)
- */
-typedef struct ControllerType
-{
-    //  movement mode
-    int8_t movement_mode;
-    //  include vector-x,y,theta
-    vector3_t movement;
-    //  shooter variable
-    bool all_reload;
-    shooter_t shooter;
-} controller_t;
+#define SUB_CONTROLLER_ID 0
 
 ////////////////////////////////////
 //  Private Variable
@@ -130,27 +97,13 @@ AnalogIn joy_y(JOY_LEFT_Y);
 AnalogIn joy_theta(JOY_RIGHT_X);
 
 //  UART
-UnbufferedSerial dev(IM920_TX, IM920_RX, IM920_BAUDRATE);
+SerialDev *dev = new MbedHardwareSerial(new BufferedSerial(IM920_TX, IM920_RX, IM920_BAUDRATE));
+SerialBridge serial(dev, 1024);
+
+Controller controller_msg;
 
 //  Intruppt timer
 Timer interrupt_timer;
-
-//  Internal variables
-//  controller
-controller_t _controller = {
-    0,
-    {
-        0.0,
-        0.0,
-        0.0
-    },
-    false,
-    {
-        0,
-        0.0,
-        0
-    }
-};
 
 ////////////////////////////////////
 //  Private Prototype Function
@@ -185,6 +138,21 @@ void reset_cooltime();
 int main()
 {
     printf("Launch\n\r");
+
+    //  init serial bridge
+    serial.add_frame(SUB_CONTROLLER_ID, &controller_msg);
+
+    //  init message
+    controller_msg.data.all_reload = false;
+    controller_msg.data.emergency_switch = false;
+    controller_msg.data.movement_mode = 0;
+    controller_msg.data.movement.x = 0.0;
+    controller_msg.data.movement.y = 0.0;
+    controller_msg.data.movement.z = 0.0;
+    controller_msg.data.shooter.action = 0;
+    controller_msg.data.shooter.power = 0.0;
+    controller_msg.data.shooter.num = 0;
+
     interrupt_timer.start();
 
     initialize_callback();
@@ -217,22 +185,7 @@ static void initialize_callback()
 //  Transfer packet
 void transfer_packet()
 {
-    //  TODO create UART system with im920sl
-
-    //  DEBUG
-    // printf(
-    //     "m:%d\n\rX:%.3f Y:%.3f T:%.3f\n\ra:%d\n\rn:%d p:%.3f ac:%d\n\n\r",
-    //     _controller.movement_mode,
-    //     _controller.movement.x, _controller.movement.y, _controller.movement.z,
-    //     _controller.all_reload,
-    //     _controller.shooter.num, _controller.shooter.power, _controller.shooter.action
-    // );
-    printf(
-        "m:%d a:%d n:%d p:%.3f ac:%d\n\r",
-        _controller.movement_mode,
-        _controller.all_reload,
-        _controller.shooter.num, _controller.shooter.power, _controller.shooter.action
-    );
+    serial.write(SUB_CONTROLLER_ID);
 }
 
 //  update controller
@@ -242,7 +195,7 @@ void update_controller()
     fillter_analog_value();
 
     //  shooter action
-    if(_controller.shooter.action != 3)
+    if(controller_msg.data.shooter.action != 3)
     {
       if(rc_up && rc_down)
       {
@@ -250,11 +203,11 @@ void update_controller()
       }
       else if (rc_up)
       {
-        _controller.shooter.action = 1;
+        controller_msg.data.shooter.action = 1;
       }
       else if (rc_down)
       {
-        _controller.shooter.action = 2;
+        controller_msg.data.shooter.action = 2;
       }
     }
 }
@@ -268,9 +221,9 @@ void fillter_analog_value()
     float theta = (joy_theta.read() - 0.5) * 2;
 
     //  deadzone
-    _controller.movement.x = -JOYSTIC_DEADZONE < x && x < JOYSTIC_DEADZONE ? 0.0 : x;
-    _controller.movement.y = -JOYSTIC_DEADZONE < y && y < JOYSTIC_DEADZONE ? 0.0 : y;
-    _controller.movement.z = -JOYSTIC_DEADZONE < theta && theta < JOYSTIC_DEADZONE ? 0.0 : theta;
+    controller_msg.data.movement.x = -JOYSTIC_DEADZONE < x && x < JOYSTIC_DEADZONE ? 0.0 : x;
+    controller_msg.data.movement.y = -JOYSTIC_DEADZONE < y && y < JOYSTIC_DEADZONE ? 0.0 : y;
+    controller_msg.data.movement.z = -JOYSTIC_DEADZONE < theta && theta < JOYSTIC_DEADZONE ? 0.0 : theta;
 }
 
 //  LC interrupt
@@ -281,13 +234,13 @@ void lc_up_callback()
         return;
     }
 
-    float power = _controller.shooter.power;
+    float power = controller_msg.data.shooter.power;
 
     //  increase
     power += lb_1 ? SHOOTER_POWER_FAST_DIFFERENCE: SHOOTER_POWER_SLOW_DIFFERENCE;
 
     //  limit
-    _controller.shooter.power = power > 1.0 ? 1.0: power;
+    controller_msg.data.shooter.power = power > 1.0 ? 1.0: power;
 
     reset_cooltime();
 }
@@ -299,13 +252,13 @@ void lc_down_callback()
         return;
     }
 
-    float power = _controller.shooter.power;
+    float power = controller_msg.data.shooter.power;
 
     //  increase
     power -= lb_1 ? SHOOTER_POWER_FAST_DIFFERENCE: SHOOTER_POWER_SLOW_DIFFERENCE;
 
     //  limit
-    _controller.shooter.power = power < 0.0 ? 0.0: power;
+    controller_msg.data.shooter.power = power < 0.0 ? 0.0: power;
 
     reset_cooltime();
 }
@@ -318,12 +271,12 @@ void rc_left_callback()
         return;
     }
 
-    _controller.all_reload = true;
+    controller_msg.data.all_reload = true;
 
     //  publish
     transfer_packet();
     //  reset
-    _controller.all_reload = false;
+    controller_msg.data.all_reload = false;
 
     reset_cooltime();
 }
@@ -335,10 +288,10 @@ void rc_right_callback()
         return;
     }
 
-    int8_t mode = _controller.movement_mode + 1;
+    int8_t mode = controller_msg.data.movement_mode + 1;
 
     //  limitter
-    _controller.movement_mode = mode >= 3 ? 0: mode;
+    controller_msg.data.movement_mode = mode >= 3 ? 0: mode;
 
     reset_cooltime();
 }
@@ -351,10 +304,10 @@ void rb_1_callback()
         return;
     }
 
-    int mode = _controller.shooter.num + 1;
+    int mode = controller_msg.data.shooter.num + 1;
 
     //  limitter
-    _controller.shooter.num = mode >= 3 ? 0: mode;
+    controller_msg.data.shooter.num = mode >= 3 ? 0: mode;
 
     reset_cooltime();
 }
@@ -366,12 +319,12 @@ void rb_2_callback()
         return;
     }
 
-    _controller.shooter.action = 3;
+    controller_msg.data.shooter.action = 3;
     
     //  publish
     transfer_packet();
     //  reset
-    _controller.shooter.action = 0;
+    controller_msg.data.shooter.action = 0;
 
     reset_cooltime();
 }
