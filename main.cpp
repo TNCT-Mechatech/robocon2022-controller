@@ -73,9 +73,13 @@
 
 ////////////////////////////////////
 //  Private Variable
+//  Emergency Stop
+DigitalIn emergency_stop(EMERGENCY_STOP);
+
 //  LC Interrupt
 InterruptIn lc_up(LC_UP, PullDown);
 InterruptIn lc_down(LC_DOWN, PullDown);
+InterruptIn lc_left(LC_LEFT, PullDown);
 
 //  RC Interrupt
 InterruptIn rc_left(RC_LEFT, PullDown);
@@ -121,6 +125,7 @@ void fillter_analog_value();
 //  LC interrupt
 void lc_up_callback();
 void lc_down_callback();
+void lc_left_callback();
 
 //  RC interrupt
 void rc_left_callback();
@@ -152,6 +157,7 @@ int main()
     controller_msg.data.shooter.action = 0;
     controller_msg.data.shooter.power = 0.0;
     controller_msg.data.shooter.num = 0;
+    controller_msg.data.face = 0;
 
     interrupt_timer.start();
 
@@ -174,6 +180,7 @@ static void initialize_callback()
     //  lc
     lc_up.rise(lc_up_callback);
     lc_down.rise(lc_down_callback);
+    lc_left.rise(lc_left_callback);
     //  rc
     rc_left.rise(rc_left_callback);
     rc_right.rise(rc_right_callback);
@@ -191,6 +198,9 @@ void transfer_packet()
 //  update controller
 void update_controller()
 {
+    //  emergency stop
+    controller_msg.data.emergency_switch = emergency_stop;
+
     //  update joystick
     fillter_analog_value();
 
@@ -262,6 +272,23 @@ void lc_down_callback()
 
     reset_cooltime();
 }
+
+void lc_left_callback()
+{
+    if(is_cooltime())
+    {
+        return;
+    }
+
+
+    int8_t mode = controller_msg.data.face + 1;
+
+    //  limitter
+    controller_msg.data.face = mode >= 4 ? 1 : mode;
+
+    reset_cooltime();
+}
+
 
 //  RC interrupt
 void rc_left_callback()
