@@ -109,6 +109,9 @@ Controller controller_msg;
 //  Intruppt timer
 Timer interrupt_timer;
 
+//  need to transfer
+bool _need_transfer = false;
+
 ////////////////////////////////////
 //  Private Prototype Function
 //  Initializer callback
@@ -163,13 +166,20 @@ int main()
 
     initialize_callback();
 
-    while (true) {
-
+    for(int i = 0 ; ; i++) {
         //  update controller
         update_controller();
 
         //  publish
         transfer_packet();
+
+        if(_need_transfer)
+        {
+            controller_msg.data.all_reload = false;
+            controller_msg.data.shooter.action = 0;
+
+            _need_transfer = false;
+        }
 
         wait_us(LOOP_RATE * 1000);
     }
@@ -218,6 +228,9 @@ void update_controller()
       else if (rc_down)
       {
         controller_msg.data.shooter.action = 2;
+      }
+      else if (!rc_up && !rc_down){
+        controller_msg.data.shooter.action = 0;
       }
     }
 }
@@ -301,9 +314,10 @@ void rc_left_callback()
     controller_msg.data.all_reload = true;
 
     //  publish
-    transfer_packet();
+    // transfer_packet();
+    _need_transfer = true;
     //  reset
-    controller_msg.data.all_reload = false;
+    // controller_msg.data.all_reload = false;
 
     reset_cooltime();
 }
@@ -349,9 +363,10 @@ void rb_2_callback()
     controller_msg.data.shooter.action = 3;
     
     //  publish
-    transfer_packet();
+    // transfer_packet();
+    _need_transfer = true;
     //  reset
-    controller_msg.data.shooter.action = 0;
+    // controller_msg.data.shooter.action = 0;
 
     reset_cooltime();
 }
